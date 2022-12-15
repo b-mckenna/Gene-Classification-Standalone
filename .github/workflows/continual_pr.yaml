@@ -23,6 +23,9 @@ jobs:
       - name: Install
         run: | 
           python -m pip install 'continual>=2.0.0a'
+          python -m pip install xgboost
+          python -m pip install matplotlib
+          python -m pip install seaborn
       - name: Verify setup
         run: | 
           which continual
