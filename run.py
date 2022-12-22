@@ -4,16 +4,17 @@ import warnings
 import argparse
 import pandas as pd
 from continual.python.sdk.utils import get_dataset_stats_entry_dict
+from continual.python.sdk.runs import Run
 from continual import DataCheck
 from xgboost import XGBClassifier
+from sklearn.naive_bayes import MultinomialNB
 from sklearn.feature_extraction.text import CountVectorizer
 import matplotlib.pyplot as plt
 import seaborn as sns
-import pickle
+import joblib
 import logging
 from sklearn.model_selection import train_test_split
 from sklearn.metrics import accuracy_score,f1_score,recall_score,precision_score,confusion_matrix
-
 
 logging.basicConfig(level=logging.WARN)
 logger = logging.getLogger(__name__)
@@ -68,6 +69,43 @@ def setup_metrics_dict(accuracy, f1, recall, precision):
 	]
 	return metric_dicts
 
+def calculate_metrics(y_test,y_pred):
+	accuracy = accuracy_score(y_test,y_pred)
+	precision=precision_score(y_test,y_pred,average='weighted')
+	recall=recall_score(y_test,y_pred,average='weighted')
+	f1=f1_score(y_test,y_pred,average='weighted')
+	return setup_metrics_dict(accuracy, f1, recall, precision)
+
+def create_confusion_matrix(name, y_test,y_pred):
+	plt.figure(figsize=(10,8))
+	sns.heatmap(confusion_matrix(y_test,y_pred),annot=True,cmap='viridis')
+	name = name
+	plt.savefig(name + ".png")
+
+def run_experiment(experiment, name, model, X_train, y_train, y_test):
+	model.fit(X_train,y_train)
+
+	joblib.dump(model, open(name+"_model", "wb"))
+
+	# Test model
+	y_pred=model.predict(X_test)
+
+	metrics_dict = calculate_metrics(y_test, y_pred)
+	
+	create_confusion_matrix(name+"_confusion_matrix", y_test, y_pred)
+
+	# Log confusion matrix, model, test metrics, and tags to experiment
+	experiment.artifacts.create(key=name+"_confusion_matrix", path="./"+name+"_confusion_matrix.png", type="graph")
+	experiment.artifacts.create(name+'_model',name+'_model', external=False, upload=True)
+	experiment.create_metrics(metrics=metrics_dict)
+	experiment.tags.create(key="algo", value=name)
+
+def get_metric_id(experiment, key):
+    for exp in experiment.metrics.list(page_size=10):
+        if exp.key == key:
+            return exp.name.split('/')[9]
+
+
 if __name__ == "__main__":
 	warnings.filterwarnings("ignore")
 	try:
@@ -78,6 +116,7 @@ if __name__ == "__main__":
 		parser.add_argument('--max_depth', type=int, default=4.0)
 		parser.add_argument('--eval_metric', type=str, default="mae")
 		parser.add_argument('--num_class', type=int, default=3)
+		parser.add_argument('--fit_prior', type=bool, default=False)
 
 		args, _ = parser.parse_known_args()
 	except Exception as e:
@@ -88,11 +127,14 @@ if __name__ == "__main__":
 		client = Client(api_key="apikey/dc534806630148a3b5d567405c908d26")
 		run_id = os.environ.get("CONTINUAL_RUN_ID", None)
 		run = client.runs.create(description="An example run", run_id=run_id)
+		run.state == "ACTIVE"
 	except Exception as e:
 		logger.exception(
             "Unable to create a client and run. Error: %s", e
         )
 	
+	#run.start_run()
+
 	model = run.models.create("test_model")
 	model_version = model.model_versions.create()
 
@@ -121,64 +163,40 @@ if __name__ == "__main__":
 
 	# Split dataset
 	X_train,X_test,y_train,y_test=train_test_split(X,y,test_size=0.20,random_state=10)
-
-	# Set parameters
-	params ={
-		'max_depth': args.max_depth,
-		'eta': args.learning_rate,
-		'num_class': args.num_class,
-		'eval_metric': args.eval_metric,
-		'reg_alpha': args.alpha
+	xgb_params = {
+			'max_depth': args.max_depth,
+			'eta': args.learning_rate,
+			'num_class': args.num_class,
+			'eval_metric': args.eval_metric,
+			'reg_alpha': args.alpha
 	}
-	epochs = 5
-
-	# Train model
-	xgb=XGBClassifier(params)
-	xgb.fit(X_train,y_train)
-
-	# Test model
-	y_pred=xgb.predict(X_test)
-
-	accuracy = accuracy_score(y_test,y_pred)
-	f1=f1_score(y_test,y_pred,average='weighted')
-	recall=recall_score(y_test,y_pred,average='weighted')
-	precision=precision_score(y_test,y_pred,average='weighted')
-
-	metric_dicts = setup_metrics_dict(accuracy, f1, recall, precision)
+	xgb=XGBClassifier(xgb_params)
 	
-	# Log metrics from previous model test
-	model_version.create_metrics(metrics=metric_dicts)
-
-	print(model_version.list_metrics(page_size=3))
-
-	# Create confusion matrix
-	plt.figure(figsize=(10,8))
-	sns.heatmap(confusion_matrix(y_test,y_pred),annot=True,cmap='viridis')
-	plt.savefig('confusion_matrix.png')
-
-	# Log confusion matrix
-	confusion_matrix_artifact = model_version.artifacts.create('confusion_matrix','confusion_matrix.png', upload=True, external=False)
-
 	# Create experiment
-	experiment = model_version.experiments.create()
+	xgb_experiment = model_version.experiments.create()
+	
+	run_experiment(xgb_experiment, "xgb", xgb, X_train, y_train, y_test)
+	
+	# Train second algorithm
+	mnb = MultinomialNB(alpha=args.alpha,fit_prior=args.fit_prior)
+	
+	mnb_experiment = model_version.experiments.create()
+	run_experiment(mnb_experiment, "mnb", mnb, X_train, y_train, y_test)
+	
+	# Compare experiments to find which is better performing
+	xgb_accuracy = get_metric_id(xgb_experiment, "accuracy")
+	mnb_accuracy = get_metric_id(mnb_experiment, "accuracy")
 
-	# Log confusion matrix, model, test metrics, and tags to experiment
-	experiment.artifacts.create(key="confusion_matrix", path="./confusion_matrix.png", type="graph")
-	experiment.artifacts.create('xgb_model','xgb_model')
-	experiment.create_metrics(metrics=metric_dicts)
-	experiment.tags.create(key="name", value="higher_alpha")
-
-	# Print out experiment
-	print([exp for exp in model_version.experiments.list_all()])
-
-	# Save XG Boost model as pickle file
-	pickle.dump(xgb, open("xgb_model", "wb"))
-
-	# Log xgb model artifact to model_version
-	model_version.artifacts.create('xgb_model','xgb_model', upload=True, external=False)
-
-	# Load local xgb model artifact
-	xgb_model_loaded = pickle.load(open('xgb_model', "rb"))
-
+	# TODO: Register winning model
+	if mnb_accuracy > xgb_accuracy:
+		# Log mnb model artifact to model_version
+		model_version.artifacts.create('mnb_model','mnb_model', upload=True, external=False)
+	elif mnb_accuracy < xgb_accuracy:
+		# Log xgb model artifact to model_version
+		model_version.artifacts.create('xgb_model','xgb_model', upload=True, external=False)
+	else:
+		# Log mnb model artifact to model_version
+		model_version.artifacts.create('mnb_model','mnb_model', upload=True, external=False)
+	
+	
 	run.complete()
-
