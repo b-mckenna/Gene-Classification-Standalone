@@ -3,9 +3,9 @@ import os
 import warnings
 import argparse
 import pandas as pd
-from continual.python.sdk.utils import get_dataset_stats_entry_dict
+#from continual.python.sdk.utils import get_dataset_stats_entry_dict
 from continual.python.sdk.runs import Run
-from continual import DataCheck
+# from continual import DataCheck
 from xgboost import XGBClassifier
 from sklearn.naive_bayes import MultinomialNB
 from sklearn.feature_extraction.text import CountVectorizer
@@ -97,15 +97,17 @@ def run_experiment(experiment, name, model, X_train, y_train, y_test):
 	# Log confusion matrix, model, test metrics, and tags to experiment
 	experiment.artifacts.create(key=name+"_confusion_matrix", path="./"+name+"_confusion_matrix.png", type="graph")
 	experiment.artifacts.create(name+'_model',name+'_model', external=False, upload=True)
-	experiment.create_metrics(metrics=metrics_dict)
+	for i in metrics_dict:
+		experiment.metrics.create(key=i["key"], value=i["value"], direction=i["direction"], group_name=i["group_name"])
+
 	experiment.tags.create(key="algo", value=name)
 
 def get_metric_id(experiment, key):
     for exp in experiment.metrics.list(page_size=10):
         if exp.key == key:
-            return exp.name.split('/')[9]
+            return exp.value
 
-
+#exp.name.split('/')[9]
 if __name__ == "__main__":
 	warnings.filterwarnings("ignore")
 	try:
@@ -124,7 +126,8 @@ if __name__ == "__main__":
             "Unable to parse CLI arguments Error: %s", e
         )
 	try:
-		client = Client(api_key="apikey/dc534806630148a3b5d567405c908d26")
+		client = Client(api_key="apikey/036dd4d42e94451d97c9bd7bfbb004fa")
+		client.set_config_project(project="projects/dna_sequencing", save=False, environment="production")
 		run_id = os.environ.get("CONTINUAL_RUN_ID", None)
 		run = client.runs.create(description="An example run", run_id=run_id)
 		run.state == "ACTIVE"
@@ -134,8 +137,8 @@ if __name__ == "__main__":
         )
 	
 	#run.start_run()
-
-	model = run.models.create("test_model")
+	id = "dna_sequencing_model"
+	model = run.models.create(display_name=id, description="Classifying dna into gene families")
 	model_version = model.model_versions.create()
 
 	# Create dataset object and load data from local text file
@@ -144,19 +147,21 @@ if __name__ == "__main__":
 	dna_data = pd.read_table('dna_sequence_dataset/human.txt')
 
 	# Profile data
-	dataset_stats = get_dataset_stats_entry_dict(
-		dna_data,
-		"sequence", 
-		["class"],
-		"class",
-		"class"
-		)
-	dataset_version.create_data_profile(stats_entries=[dataset_stats])
+	# TODO refactor with https://help.continual.ai/sdk-reference/#continual.python.sdk.data_profiles.DataProfilesManager.create
+
+	#dataset_stats = get_dataset_stats_entry_dict(
+	#	dna_data,
+	#	"sequence", 
+	#	["class"],
+	#	"class",
+	#	"class"
+	#	)
+	#dataset_version.create_data_profile(stats_entries=[dataset_stats])
 
 	# Check data
-	checks = [dict(display_name = "my_data_check", success=True)]
-	dataset_version.create_data_checks(checks)
-	print(dataset_version.list_data_checks(page_size=3))
+	#checks = [dict(display_name = "my_data_check", success=True)]
+	#dataset_version.create_data_checks(checks)
+	#print(dataset_version.list_data_checks(page_size=3))
 
 	# Data Transformation
 	X, y = transform(dna_data)
@@ -186,6 +191,7 @@ if __name__ == "__main__":
 	# Compare experiments to find which is better performing
 	xgb_accuracy = get_metric_id(xgb_experiment, "accuracy")
 	mnb_accuracy = get_metric_id(mnb_experiment, "accuracy")
+	print(xgb_accuracy)
 
 	# TODO: Register winning model
 	if mnb_accuracy > xgb_accuracy:
@@ -197,6 +203,5 @@ if __name__ == "__main__":
 	else:
 		# Log mnb model artifact to model_version
 		model_version.artifacts.create('mnb_model','mnb_model', upload=True, external=False)
-	
-	
+
 	run.complete()

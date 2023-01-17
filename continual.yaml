@@ -1,6 +1,6 @@
-api_key: apikey/dc534806630148a3b5d567405c908d26
+api_key: apikey/036dd4d42e94451d97c9bd7bfbb004fa
 email: brendan@continual.ai
 endpoint: https://sdk.continual.ai
-environment: prod
+environment: production
 project: projects/dna_sequencing
 style: GREEN
