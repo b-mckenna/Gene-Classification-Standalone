@@ -126,7 +126,7 @@ if __name__ == "__main__":
             "Unable to parse CLI arguments Error: %s", e
         )
 	try:
-		client = Client(api_key="apikey/036dd4d42e94451d97c9bd7bfbb004fa")
+		client = Client(api_key="apikey/346585479d59413b89a5996885e26563") #036dd4d42e94451d97c9bd7bfbb004fa
 		client.set_config_project(project="projects/dna_sequencing", save=False, environment="production")
 		run_id = os.environ.get("CONTINUAL_RUN_ID", None)
 		run = client.runs.create(description="An example run", run_id=run_id)
